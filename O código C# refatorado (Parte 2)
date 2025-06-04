@@ -1,0 +1,359 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace BibliotecaApp
+{
+    // Interfaces para o DIP e SRP
+    public interface INotificador
+    {
+        void EnviarNotificacao(string destinatario, string assunto, string mensagem);
+    }
+
+    public class NotificadorEmail : INotificador
+    {
+        public void EnviarNotificacao(string destinatario, string assunto, string mensagem)
+        {
+            Console.WriteLine($"[EMAIL] Enviado para {destinatario}. Assunto: {assunto}: {mensagem}");
+        }
+    }
+
+    public class NotificadorSMS : INotificador
+    {
+        public void EnviarNotificacao(string destinatario, string assunto, string mensagem)
+        {
+            Console.WriteLine($"[SMS] Enviado para {destinatario}: {mensagem}");
+        }
+    }
+
+    // Gerenciador de notificações - SRP e OCP
+    public class GerenciadorNotificacoes
+    {
+        private readonly List<INotificador> _notificadores;
+
+        public GerenciadorNotificacoes(IEnumerable<INotificador> notificadores)
+        {
+            _notificadores = new List<INotificador>(notificadores);
+        }
+
+        public void Notificar(string destinatario, string assunto, string mensagem)
+        {
+            foreach (var notificador in _notificadores)
+            {
+                notificador.EnviarNotificacao(destinatario, assunto, mensagem);
+            }
+        }
+    }
+
+    // Repositório de livros - SRP
+    public class LivroRepository
+    {
+        private readonly List<Livro> _livros = new List<Livro>();
+
+        public void Adicionar(Livro livro)
+        {
+            _livros.Add(livro);
+            Console.WriteLine($"Livro adicionado: {livro.Titulo}");
+        }
+
+        public Livro BuscarPorISBN(string isbn)
+        {
+            return _livros.Find(l => l.ISBN == isbn);
+        }
+
+        public IEnumerable<Livro> BuscarTodos()
+        {
+            return _livros.AsReadOnly();
+        }
+    }
+
+    // Repositório de usuários - SRP
+    public class UsuarioRepository
+    {
+        private readonly List<Usuario> _usuarios = new List<Usuario>();
+
+        public void Adicionar(Usuario usuario)
+        {
+            _usuarios.Add(usuario);
+            Console.WriteLine($"Usuário adicionado: {usuario.Nome}");
+        }
+
+        public Usuario BuscarPorId(int id)
+        {
+            return _usuarios.Find(u => u.ID == id);
+        }
+
+        public IEnumerable<Usuario> BuscarTodos()
+        {
+            return _usuarios.AsReadOnly();
+        }
+    }
+
+    // Repositório de empréstimos - SRP
+    public class EmprestimoRepository
+    {
+        private readonly List<Emprestimo> _emprestimos = new List<Emprestimo>();
+
+        public void Adicionar(Emprestimo emprestimo)
+        {
+            _emprestimos.Add(emprestimo);
+        }
+
+        public Emprestimo BuscarEmprestimoAtivo(string isbn, int usuarioId)
+        {
+            return _emprestimos.Find(e =>
+                e.Livro.ISBN == isbn &&
+                e.Usuario.ID == usuarioId &&
+                e.DataDevolucaoEfetiva == null);
+        }
+
+        public IEnumerable<Emprestimo> BuscarTodos()
+        {
+            return _emprestimos.AsReadOnly();
+        }
+    }
+
+    // Serviço de Multa - SRP
+    public class CalculadorMulta
+    {
+        private const double ValorMultaPorDia = 1.00;
+
+        public double CalcularMulta(DateTime dataDevolucaoPrevista, DateTime dataDevolucaoEfetiva)
+        {
+            if (dataDevolucaoEfetiva <= dataDevolucaoPrevista)
+            {
+                return 0;
+            }
+
+            TimeSpan atraso = dataDevolucaoEfetiva - dataDevolucaoPrevista;
+            return atraso.Days * ValorMultaPorDia;
+        }
+    }
+
+    // Classe principal de gerenciamento de biblioteca - Orquestrador
+    public class SistemaGerenciamentoBiblioteca
+    {
+        private readonly LivroRepository _livroRepository;
+        private readonly UsuarioRepository _usuarioRepository;
+        private readonly EmprestimoRepository _emprestimoRepository;
+        private readonly GerenciadorNotificacoes _gerenciadorNotificacoes;
+        private readonly CalculadorMulta _calculadorMulta;
+
+        public SistemaGerenciamentoBiblioteca(
+            LivroRepository livroRepository,
+            UsuarioRepository usuarioRepository,
+            EmprestimoRepository emprestimoRepository,
+            GerenciadorNotificacoes gerenciadorNotificacoes,
+            CalculadorMulta calculadorMulta)
+        {
+            _livroRepository = livroRepository;
+            _usuarioRepository = usuarioRepository;
+            _emprestimoRepository = emprestimoRepository;
+            _gerenciadorNotificacoes = gerenciadorNotificacoes;
+            _calculadorMulta = calculadorMulta;
+        }
+
+        public void CadastrarLivro(string titulo, string autor, string isbn)
+        {
+            var livro = new Livro(titulo, autor, isbn);
+            _livroRepository.Adicionar(livro);
+        }
+
+        public void CadastrarUsuario(string nome, int id)
+        {
+            var usuario = new Usuario(nome, id);
+            _usuarioRepository.Adicionar(usuario);
+            _gerenciadorNotificacoes.Notificar(usuario.Nome, "Bem-vindo à Biblioteca", "Você foi cadastrado em nosso sistema!");
+        }
+
+        public bool RealizarEmprestimo(int usuarioId, string isbn, int diasEmprestimo)
+        {
+            var livro = _livroRepository.BuscarPorISBN(isbn);
+            var usuario = _usuarioRepository.BuscarPorId(usuarioId);
+
+            if (livro == null)
+            {
+                Console.WriteLine("Erro: Livro não encontrado.");
+                return false;
+            }
+            if (usuario == null)
+            {
+                Console.WriteLine("Erro: Usuário não encontrado.");
+                return false;
+            }
+            if (!livro.Disponivel)
+            {
+                Console.WriteLine($"Erro: Livro '{livro.Titulo}' não está disponível.");
+                return false;
+            }
+
+            livro.Disponivel = false;
+            var emprestimo = new Emprestimo(livro, usuario, DateTime.Now, DateTime.Now.AddDays(diasEmprestimo));
+            _emprestimoRepository.Adicionar(emprestimo);
+
+            _gerenciadorNotificacoes.Notificar(usuario.Nome, "Empréstimo Realizado", $"Você pegou emprestado o livro: {livro.Titulo}");
+            _gerenciadorNotificacoes.Notificar(usuario.Nome, "Empréstimo SMS", $"Empréstimo do livro: {livro.Titulo}"); // Exemplo de notificação SMS
+
+            return true;
+        }
+
+        public double RealizarDevolucao(string isbn, int usuarioId)
+        {
+            var emprestimo = _emprestimoRepository.BuscarEmprestimoAtivo(isbn, usuarioId);
+
+            if (emprestimo == null)
+            {
+                Console.WriteLine("Erro: Empréstimo não encontrado ou já devolvido.");
+                return 0; // Indicador de erro mais claro (poderia ser uma exceção)
+            }
+
+            emprestimo.DataDevolucaoEfetiva = DateTime.Now;
+            emprestimo.Livro.Disponivel = true;
+
+            double multa = _calculadorMulta.CalcularMulta(emprestimo.DataDevolucaoPrevista, emprestimo.DataDevolucaoEfetiva.Value);
+
+            if (multa > 0)
+            {
+                _gerenciadorNotificacoes.Notificar(emprestimo.Usuario.Nome, "Multa por Atraso", $"Você tem uma multa de R$ {multa:F2} pelo atraso na devolução do livro '{emprestimo.Livro.Titulo}'.");
+            }
+            Console.WriteLine($"Livro '{emprestimo.Livro.Titulo}' devolvido com sucesso.");
+            return multa;
+        }
+
+        public IEnumerable<Livro> ObterTodosLivros() => _livroRepository.BuscarTodos();
+        public IEnumerable<Usuario> ObterTodosUsuarios() => _usuarioRepository.BuscarTodos();
+        public IEnumerable<Emprestimo> ObterTodosEmprestimos() => _emprestimoRepository.BuscarTodos();
+    }
+
+    // Classes de Entidade (mais robustas com construtores)
+    public class Livro
+    {
+        public string Titulo { get; private set; }
+        public string Autor { get; private set; }
+        public string ISBN { get; private set; }
+        public bool Disponivel { get; set; } // Set acessível para a lógica de empréstimo/devolução
+
+        public Livro(string titulo, string autor, string isbn)
+        {
+            if (string.IsNullOrWhiteSpace(titulo)) throw new ArgumentException("Título não pode ser vazio.");
+            if (string.IsNullOrWhiteSpace(autor)) throw new ArgumentException("Autor não pode ser vazio.");
+            if (string.IsNullOrWhiteSpace(isbn)) throw new ArgumentException("ISBN não pode ser vazio.");
+
+            Titulo = titulo;
+            Autor = autor;
+            ISBN = isbn;
+            Disponivel = true;
+        }
+    }
+
+    public class Usuario
+    {
+        public string Nome { get; private set; }
+        public int ID { get; private set; }
+
+        public Usuario(string nome, int id)
+        {
+            if (string.IsNullOrWhiteSpace(nome)) throw new ArgumentException("Nome não pode ser vazio.");
+            if (id <= 0) throw new ArgumentException("ID do usuário deve ser um número positivo.");
+
+            Nome = nome;
+            ID = id;
+        }
+    }
+
+    public class Emprestimo
+    {
+        public Livro Livro { get; private set; }
+        public Usuario Usuario { get; private set; }
+        public DateTime DataEmprestimo { get; private set; }
+        public DateTime DataDevolucaoPrevista { get; private set; }
+        public DateTime? DataDevolucaoEfetiva { get; set; }
+
+        public Emprestimo(Livro livro, Usuario usuario, DateTime dataEmprestimo, DateTime dataDevolucaoPrevista)
+        {
+            Livro = livro ?? throw new ArgumentNullException(nameof(livro));
+            Usuario = usuario ?? throw new ArgumentNullException(nameof(usuario));
+            DataEmprestimo = dataEmprestimo;
+            DataDevolucaoPrevista = dataDevolucaoPrevista;
+            DataDevolucaoEfetiva = null; // Inicialmente nula
+        }
+    }
+
+    // Classe Program para testar
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            // Configuração das dependências (Inversão de Controle / Injeção de Dependência)
+            var notificadores = new List<INotificador>
+            {
+                new NotificadorEmail(),
+                new NotificadorSMS()
+            };
+            var gerenciadorNotificacoes = new GerenciadorNotificacoes(notificadores);
+
+            var livroRepository = new LivroRepository();
+            var usuarioRepository = new UsuarioRepository();
+            var emprestimoRepository = new EmprestimoRepository();
+            var calculadorMulta = new CalculadorMulta();
+
+            var biblioteca = new SistemaGerenciamentoBiblioteca(
+                livroRepository,
+                usuarioRepository,
+                emprestimoRepository,
+                gerenciadorNotificacoes,
+                calculadorMulta);
+
+            // Adicionar livros
+            biblioteca.CadastrarLivro("Clean Code", "Robert C. Martin", "978-0132350884");
+            biblioteca.CadastrarLivro("Design Patterns", "Erich Gamma", "978-0201633610");
+
+            // Adicionar usuários
+            biblioteca.CadastrarUsuario("João Silva", 1);
+            biblioteca.CadastrarUsuario("Maria Oliveira", 2);
+
+            // Realizar empréstimo
+            Console.WriteLine("\n--- Realizando Empréstimo ---");
+            biblioteca.RealizarEmprestimo(1, "978-0132350884", 7); // João pega Clean Code
+            Console.WriteLine($"Disponibilidade Clean Code: {livroRepository.BuscarPorISBN("978-0132350884").Disponivel}");
+
+            // Simular um atraso para teste
+            var emprestimoAtrasado = emprestimoRepository.BuscarEmprestimoAtivo("978-0132350884", 1);
+            if (emprestimoAtrasado != null)
+            {
+                // Manipula a data de devolução prevista para simular atraso (apenas para teste)
+                emprestimoAtrasado.DataDevolucaoPrevista = DateTime.Now.AddDays(-5); // 5 dias de atraso
+            }
+
+            // Realizar devolução (com atraso simulado)
+            Console.WriteLine("\n--- Realizando Devolução ---");
+            double multa = biblioteca.RealizarDevolucao("978-0132350884", 1);
+            Console.WriteLine($"Multa por atraso: R$ {multa:F2}");
+            Console.WriteLine($"Disponibilidade Clean Code: {livroRepository.BuscarPorISBN("978-0132350884").Disponivel}");
+
+            // Tentar devolver um livro que não foi emprestado ou já foi devolvido
+            Console.WriteLine("\n--- Tentando Devolução Inválida ---");
+            biblioteca.RealizarDevolucao("978-0201633610", 1);
+
+            Console.WriteLine("\n--- Listando Livros ---");
+            foreach (var livro in biblioteca.ObterTodosLivros())
+            {
+                Console.WriteLine($"Livro: {livro.Titulo}, Autor: {livro.Autor}, Disponível: {livro.Disponivel}");
+            }
+
+            Console.WriteLine("\n--- Listando Usuários ---");
+            foreach (var usuario in biblioteca.ObterTodosUsuarios())
+            {
+                Console.WriteLine($"Usuário: {usuario.Nome}, ID: {usuario.ID}");
+            }
+
+            Console.WriteLine("\n--- Listando Empréstimos ---");
+            foreach (var emp in biblioteca.ObterTodosEmprestimos())
+            {
+                Console.WriteLine($"Livro: {emp.Livro.Titulo}, Usuário: {emp.Usuario.Nome}, Empréstimo: {emp.DataEmprestimo:d}, Devolução Prevista: {emp.DataDevolucaoPrevista:d}, Devolução Efetiva: {(emp.DataDevolucaoEfetiva.HasValue ? emp.DataDevolucaoEfetiva.Value.ToString("d") : "Pendente")}");
+            }
+
+            Console.ReadLine();
+        }
+    }
+}
